@@ -1,0 +1,5 @@
+{
+  "name": "BreathCoach",
+  "description": "A web-based biofeedback application that uses your device's motion sensors to guide and score diaphragmatic breathing exercises. It provides real-time visual and haptic feedback to help you achieve a resonant breathing state.",
+  "requestFramePermissions": []
+}
