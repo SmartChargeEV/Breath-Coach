@@ -251,38 +251,57 @@
 
         // --- StartScreen Component ---
         const PlacementGraphic = () => (
-            <div className="w-64 h-48 mx-auto my-4 relative">
-                <svg viewBox="0 0 200 120" className="w-full h-full">
+            <div className="w-56 h-56 mx-auto my-6 relative">
+                <svg viewBox="0 0 100 100" className="w-full h-full">
                     <g stroke="#4a4a4a" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                        {/* Far Leg */}
-                        <path d="M78 88 Q 88 70, 108 62 L 138 78 L 130 92" />
-                        {/* Main Body and Head */}
-                        <path d="M190 60 C 180 50, 165 50, 155 58 L 110 74 C 90 80, 70 80, 50 90" />
-                        {/* Near Leg */}
-                        <path d="M50 90 Q 60 72, 80 64 L 110 80 L 102 94 Z" />
-                         {/* Arm */}
-                        <path d="M115 72 L 95 82" />
+                        {/* Shoulders */}
+                        <path d="M20,20 H 80" />
+                        {/* Torso Sides */}
+                        <path d="M20,20 C 15,50 30,90 40,90" />
+                        <path d="M80,20 C 85,50 70,90 60,90" />
+                        {/* Bottom line */}
+                        <path d="M40,90 H 60" />
                     </g>
                      {/* Phone Outline */}
-                    <rect x="85" y="65" width="28" height="48" rx="4" fill="none" stroke="#FFFFFF" strokeWidth="1" className="animate-subtle-pulse" transform="rotate(-15 100 89)" />
+                    <rect x="36" y="50" width="28" height="45" rx="4" fill="none" stroke="#FFFFFF" strokeWidth="1.5" className="animate-subtle-pulse" />
                 </svg>
             </div>
         );
 
         const SpiritLevel = ({ beta, gamma }) => {
-            const isFlat = beta !== null && gamma !== null && Math.abs(beta) < 10 && Math.abs(gamma) < 10;
-            const clampedGamma = Math.max(-15, Math.min(15, gamma || 0));
-            const clampedBeta = Math.max(-15, Math.min(15, beta || 0));
-            const dotX = 50 + clampedGamma * 2;
-            const dotY = 50 + clampedBeta * 2;
+            const tolerance = 15;
+            const isFlat = beta !== null && gamma !== null && Math.abs(beta) < tolerance && Math.abs(gamma) < tolerance;
+            const clampedGamma = Math.max(-20, Math.min(20, gamma || 0));
+            const clampedBeta = Math.max(-20, Math.min(20, beta || 0));
+            const dotX = 50 + clampedGamma * 1.8;
+            const dotY = 50 + clampedBeta * 1.8;
 
             return (
                 <div className="my-4 flex flex-col items-center">
                     <svg viewBox="0 0 100 100" className="w-24 h-24">
+                        <defs>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="3.5" result="coloredBlur" />
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                        </defs>
                         <circle cx="50" cy="50" r="45" fill="#1a1a1a" />
                         <circle cx="50" cy="50" r="40" stroke={isFlat ? '#ffffff' : '#4a4a4a'} strokeWidth="2" fill="transparent" style={{ transition: 'stroke 0.3s ease-in-out' }} />
                         <circle cx="50" cy="50" r="15" fill={isFlat ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.05)'} style={{ transition: 'fill 0.3s ease-in-out' }} />
-                        <circle cx={dotX} cy={dotY} r="8" fill={'#ffffff'} style={{ transition: 'cx 0.1s ease-out, cy 0.1s ease-out, fill 0.3s ease-in-out' }} />
+                        <circle 
+                            cx={dotX} 
+                            cy={dotY} 
+                            r="8" 
+                            fill={'#ffffff'} 
+                            style={{ 
+                                transition: 'cx 0.1s ease-out, cy 0.1s ease-out, opacity 0.3s ease-in-out, filter 0.3s ease-in-out',
+                                opacity: isFlat ? 1 : 0.7,
+                                filter: isFlat ? 'url(#glow)' : 'none'
+                            }} 
+                        />
                     </svg>
                 </div>
             );
@@ -294,7 +313,8 @@
             const [countdown, setCountdown] = useState(null);
             const [isStabilizing, setIsStabilizing] = useState(false);
             
-            const isFlat = orientation.beta !== null && orientation.gamma !== null && Math.abs(orientation.beta) < 10 && Math.abs(orientation.gamma) < 10;
+            const tolerance = 15;
+            const isFlat = orientation.beta !== null && orientation.gamma !== null && Math.abs(orientation.beta) < tolerance && Math.abs(orientation.gamma) < tolerance;
             const stabilityTimerRef = useRef(null);
 
             const handleDeviceOrientation = useCallback((event) => {
@@ -372,7 +392,20 @@
                 if (countdown !== null) return <p className="text-8xl font-bold text-white">{countdown}</p>;
                 if (isStabilizing) return <p className="font-semibold text-gray-300 animate-pulse">Hold steady...</p>;
                 if (orientation.beta === null) return <p className="font-semibold text-gray-300">Place phone on your belly...</p>;
-                return <p className="font-semibold text-gray-300">Adjust phone until the dot is in the center.</p>;
+
+                const { beta, gamma } = orientation;
+                const betaAbs = Math.abs(beta);
+                const gammaAbs = Math.abs(gamma);
+
+                if (betaAbs > tolerance || gammaAbs > tolerance) {
+                    if (betaAbs > gammaAbs) {
+                        return <p className="font-semibold text-gray-300">{beta > tolerance ? 'Tilt top of phone down' : 'Tilt top of phone up'}</p>;
+                    } else {
+                        return <p className="font-semibold text-gray-300">{gamma > tolerance ? 'Tilt phone to the left' : 'Tilt phone to the right'}</p>;
+                    }
+                }
+                
+                return <p className="font-semibold text-gray-300">Great! Keep it flat.</p>;
             };
 
             return (
