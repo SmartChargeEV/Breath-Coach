@@ -283,18 +283,18 @@
             </svg>
         );
         const SpiritLevel = ({ beta, gamma }) => {
-            const isFlat = beta !== null && gamma !== null && Math.abs(beta) < 5 && Math.abs(gamma) < 5;
+            const isFlat = beta !== null && gamma !== null && Math.abs(beta) < 10 && Math.abs(gamma) < 10;
             const clampedGamma = Math.max(-15, Math.min(15, gamma || 0));
             const clampedBeta = Math.max(-15, Math.min(15, beta || 0));
-            const dotX = 50 + clampedGamma * 1.5;
-            const dotY = 50 + clampedBeta * 1.5;
+            const dotX = 50 + clampedGamma * 2;
+            const dotY = 50 + clampedBeta * 2;
 
             return (
                 <div className="my-4 flex flex-col items-center">
                     <svg viewBox="0 0 100 100" className="w-24 h-24">
                         <circle cx="50" cy="50" r="45" fill="rgba(0,0,0,0.2)" />
                         <circle cx="50" cy="50" r="40" stroke={isFlat ? '#67e8f9' : '#4f46e5'} strokeWidth="2" fill="transparent" style={{ transition: 'stroke 0.3s ease-in-out' }} />
-                        <circle cx="50" cy="50" r="5" stroke="#a5b4fc" strokeWidth="1" fill="transparent" />
+                        <circle cx="50" cy="50" r="15" fill={isFlat ? 'rgba(103, 232, 249, 0.2)' : 'rgba(103, 232, 249, 0.05)'} style={{ transition: 'fill 0.3s ease-in-out' }} />
                         <circle cx={dotX} cy={dotY} r="8" fill={isFlat ? '#67e8f9' : '#a5b4fc'} style={{ transition: 'cx 0.1s ease-out, cy 0.1s ease-out, fill 0.3s ease-in-out' }} />
                     </svg>
                 </div>
@@ -307,7 +307,7 @@
             const [countdown, setCountdown] = useState(null);
             const [isStabilizing, setIsStabilizing] = useState(false);
             
-            const isFlat = orientation.beta !== null && orientation.gamma !== null && Math.abs(orientation.beta) < 5 && Math.abs(orientation.gamma) < 5;
+            const isFlat = orientation.beta !== null && orientation.gamma !== null && Math.abs(orientation.beta) < 10 && Math.abs(orientation.gamma) < 10;
             const stabilityTimerRef = useRef(null);
 
             const handleDeviceOrientation = useCallback((event) => {
@@ -338,35 +338,27 @@
             }, [handleDeviceOrientation]);
 
             useEffect(() => {
-                // If we are currently in the 2-second stabilizing period, do nothing and let the timer finish.
                 if (isStabilizing) {
                     return;
                 }
-
-                // Clear any previous timer if it exists (e.g., if user moves the phone).
                 if (stabilityTimerRef.current) {
                     clearTimeout(stabilityTimerRef.current);
                     stabilityTimerRef.current = null;
                 }
-
-                // If conditions are not met to start the countdown, reset states.
                 if (permissionState !== 'granted' || !isFlat) {
                     if (countdown !== null) setCountdown(null);
                     return;
                 }
-
-                // Conditions are met (flat, granted), we are not currently stabilizing, and no countdown has started.
                 if (countdown === null) {
-                    setIsStabilizing(true); // This will cause a re-render, but the logic above will now correctly exit.
+                    setIsStabilizing(true);
                     stabilityTimerRef.current = window.setTimeout(() => {
-                        setIsStabilizing(false); // This will cause a re-render.
+                        setIsStabilizing(false);
                         setCountdown(3);
                         speak("3");
                         stabilityTimerRef.current = null;
                     }, 2000);
                 }
             }, [isFlat, permissionState, countdown, isStabilizing, onStart]);
-
 
             useEffect(() => {
                 if (countdown === null) return;
@@ -388,9 +380,9 @@
             
             const renderStatus = () => {
                 if (countdown !== null) return <p className="text-8xl font-bold text-cyan-400">{countdown}</p>;
-                if (isStabilizing) return <p className="font-semibold text-blue-300">Hold steady...</p>;
+                if (isStabilizing) return <p className="font-semibold text-blue-300 animate-pulse">Hold steady...</p>;
                 if (orientation.beta === null) return <p className="font-semibold text-yellow-300">Place phone on your belly...</p>;
-                return <p className="font-semibold text-yellow-300">Level the phone until the ring is green.</p>;
+                return <p className="font-semibold text-yellow-300">Adjust phone until the dot is in the center.</p>;
             };
 
             return (
