@@ -338,21 +338,35 @@
             }, [handleDeviceOrientation]);
 
             useEffect(() => {
-                if (stabilityTimerRef.current) clearTimeout(stabilityTimerRef.current);
+                // If we are currently in the 2-second stabilizing period, do nothing and let the timer finish.
+                if (isStabilizing) {
+                    return;
+                }
+
+                // Clear any previous timer if it exists (e.g., if user moves the phone).
+                if (stabilityTimerRef.current) {
+                    clearTimeout(stabilityTimerRef.current);
+                    stabilityTimerRef.current = null;
+                }
+
+                // If conditions are not met to start the countdown, reset states.
                 if (permissionState !== 'granted' || !isFlat) {
-                    setIsStabilizing(false);
                     if (countdown !== null) setCountdown(null);
                     return;
                 }
-                if (countdown === null && !isStabilizing) {
-                    setIsStabilizing(true);
+
+                // Conditions are met (flat, granted), we are not currently stabilizing, and no countdown has started.
+                if (countdown === null) {
+                    setIsStabilizing(true); // This will cause a re-render, but the logic above will now correctly exit.
                     stabilityTimerRef.current = window.setTimeout(() => {
-                        setIsStabilizing(false);
+                        setIsStabilizing(false); // This will cause a re-render.
                         setCountdown(3);
                         speak("3");
+                        stabilityTimerRef.current = null;
                     }, 2000);
                 }
-            }, [isFlat, permissionState, countdown, isStabilizing]);
+            }, [isFlat, permissionState, countdown, isStabilizing, onStart]);
+
 
             useEffect(() => {
                 if (countdown === null) return;
