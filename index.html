@@ -5,23 +5,530 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>BreathCoach</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         body {
             overscroll-behavior-y: contain;
         }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/"
-  }
-}
-</script>
 </head>
 <body class="bg-indigo-900">
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <script type="text/babel" data-type="module">
+        import React, { useState, useCallback, useEffect, useRef, useMemo } from 'https://esm.sh/react@^19.2.3';
+        import ReactDOM from 'https://esm.sh/react-dom@^19.2.3/client';
+
+        // --- Shared Types & Constants ---
+        const AppState = {
+            START: 'START',
+            SESSION: 'SESSION',
+            SCORE: 'SCORE',
+        };
+
+        // --- Shared Utility Functions ---
+        const speak = (text, lang = 'en-US') => {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = lang;
+                utterance.rate = 1.1;
+                window.speechSynthesis.speak(utterance);
+            }
+        };
+
+        // --- Breathing Analysis Logic ---
+        const TARGET_BPM = 6;
+        const getStandardDeviation = (arr) => {
+            if (arr.length < 2) return 0;
+            const mean = arr.reduce((acc, val) => acc + val, 0) / arr.length;
+            const variance = arr.reduce((acc, val) => acc + (val - mean) ** 2, 0) / arr.length;
+            return Math.sqrt(variance);
+        };
+        const calculateResonanceScore = (sessionData) => {
+            const { breaths } = sessionData;
+            if (breaths.length < 3) return { resonance: 0, rhythm: 0, avgBPM: 0 };
+            
+            const intervals = [];
+            for (let i = 1; i < breaths.length; i++) {
+                intervals.push((breaths[i].timestamp - breaths[i - 1].timestamp) / 1000);
+            }
+            
+            if (intervals.length === 0) return { resonance: 0, rhythm: 0, avgBPM: 0 };
+            
+            const averageInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+            const avgBPM = 60 / averageInterval;
+            
+            const freqDifference = Math.abs(avgBPM - TARGET_BPM);
+            const frequencyScore = Math.max(0, 100 - (freqDifference / 4) * 100);
+            
+            const stdDev = getStandardDeviation(intervals);
+            const rhythmPenalty = (stdDev / averageInterval) * 400;
+            const rhythmScore = Math.max(0, 100 - rhythmPenalty);
+            
+            const resonance = (frequencyScore * 0.6) + (rhythmScore * 0.4);
+            
+            return {
+                resonance: Math.round(resonance),
+                rhythm: Math.round(rhythmScore),
+                avgBPM,
+            };
+        };
+
+        // --- Motion Sensor Hook ---
+        const useMotionSensors = () => {
+            const [filteredData, setFilteredData] = useState([]);
+            const [breathsPerMinute, setBreathsPerMinute] = useState(0);
+            const [recordedBreaths, setRecordedBreaths] = useState([]);
+            
+            const isListeningRef = useRef(false);
+            const animationFrameId = useRef(null);
+            
+            const rawBetaRef = useRef(null);
+            const baselineRef = useRef(null);
+            const filteredValueRef = useRef(null);
+            const lastPeakTimeRef = useRef(null);
+            const lastDirectionRef = useRef(0);
+            const breathTimestampsRef = useRef([]);
+
+            const processData = useCallback(() => {
+                if (!isListeningRef.current) return;
+
+                const beta = rawBetaRef.current;
+                if (beta === null) {
+                    animationFrameId.current = requestAnimationFrame(processData);
+                    return;
+                }
+                
+                if (baselineRef.current === null) {
+                    baselineRef.current = beta;
+                }
+
+                const currentRawValue = beta - baselineRef.current;
+                
+                const LOW_PASS_ALPHA = 0.1; 
+                let newFilteredValue = filteredValueRef.current === null
+                    ? currentRawValue
+                    : LOW_PASS_ALPHA * currentRawValue + (1 - LOW_PASS_ALPHA) * filteredValueRef.current;
+                filteredValueRef.current = newFilteredValue;
+
+                setFilteredData(prev => {
+                    const newData = [...prev, newFilteredValue];
+                    return newData.length > 200 ? newData.slice(1) : newData;
+                });
+
+                const prevFilteredValue = filteredData.length > 1 ? filteredData[filteredData.length - 2] : 0;
+                const currentDirection = Math.sign(newFilteredValue - prevFilteredValue);
+
+                if (currentDirection === -1 && lastDirectionRef.current === 1 && Math.abs(newFilteredValue - prevFilteredValue) > 0.03) {
+                    const now = Date.now();
+                    if (lastPeakTimeRef.current === null || (now - lastPeakTimeRef.current) > 2000) {
+                        breathTimestampsRef.current.push(now);
+                        setRecordedBreaths(prev => [...prev, { timestamp: now }]);
+                        if (navigator.vibrate) navigator.vibrate(50);
+                        lastPeakTimeRef.current = now;
+                    }
+                }
+                lastDirectionRef.current = currentDirection;
+
+                const now = Date.now();
+                const recentBreaths = breathTimestampsRef.current.filter(t => now - t < 15000);
+                if (recentBreaths.length > 1) {
+                    const secondsElapsed = (recentBreaths[recentBreaths.length - 1] - recentBreaths[0]) / 1000;
+                    const bpm = (recentBreaths.length - 1) / secondsElapsed * 60;
+                    setBreathsPerMinute(bpm);
+                }
+                
+                animationFrameId.current = requestAnimationFrame(processData);
+            }, [filteredData]);
+            
+            const handleMotionEvent = useCallback((event) => {
+                rawBetaRef.current = event.beta;
+            }, []);
+
+            const startListening = useCallback(() => {
+                isListeningRef.current = true;
+                rawBetaRef.current = null;
+                baselineRef.current = null;
+                filteredValueRef.current = null;
+                lastPeakTimeRef.current = null;
+                lastDirectionRef.current = 0;
+                breathTimestampsRef.current = [];
+                setFilteredData([]);
+                setRecordedBreaths([]);
+                setBreathsPerMinute(0);
+                
+                window.addEventListener('deviceorientation', handleMotionEvent);
+                animationFrameId.current = requestAnimationFrame(processData);
+            }, [handleMotionEvent, processData]);
+
+            const stopListening = useCallback(() => {
+                isListeningRef.current = false;
+                window.removeEventListener('deviceorientation', handleMotionEvent);
+                if (animationFrameId.current) {
+                    cancelAnimationFrame(animationFrameId.current);
+                }
+            }, [handleMotionEvent]);
+
+            return { filteredData, breathsPerMinute, recordedBreaths, startListening, stopListening };
+        };
+
+        // --- BreathingVisualizer Component ---
+        const BreathingVisualizer = ({ data }) => {
+            const [animatedData, setAnimatedData] = useState([]);
+            const targetDataRef = useRef(data);
+            const animationFrameId = useRef(null);
+            const MAX_POINTS = 200, FIXED_MIN = -5, FIXED_MAX = 5;
+
+            useEffect(() => { targetDataRef.current = data; }, [data]);
+
+            useEffect(() => {
+                const animate = () => {
+                    setAnimatedData(currentAnimatedData => {
+                        const targetData = targetDataRef.current;
+                        const LERP_FACTOR = 0.2;
+                        if (targetData.length === 0) return [];
+                        
+                        let nextAnimatedData = [...currentAnimatedData];
+                        if (nextAnimatedData.length !== targetData.length) {
+                             if (targetData.length > nextAnimatedData.length) {
+                                 const lastValue = nextAnimatedData[nextAnimatedData.length - 1] || targetData[nextAnimatedData.length] || 0;
+                                 const newPoints = Array(targetData.length - nextAnimatedData.length).fill(lastValue);
+                                 nextAnimatedData.push(...newPoints);
+                            } else {
+                                nextAnimatedData = nextAnimatedData.slice(0, targetData.length);
+                            }
+                        }
+                        for (let i = 0; i < targetData.length; i++) {
+                            nextAnimatedData[i] = (nextAnimatedData[i] || 0) + ((targetData[i] || 0) - (nextAnimatedData[i] || 0)) * LERP_FACTOR;
+                        }
+                        return nextAnimatedData;
+                    });
+                    animationFrameId.current = requestAnimationFrame(animate);
+                };
+                animationFrameId.current = requestAnimationFrame(animate);
+                return () => { if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current); };
+            }, []);
+
+            const pathData = useMemo(() => {
+                const dataToDraw = animatedData;
+                if (dataToDraw.length < 2) return 'M 0 50';
+                
+                const width = 100, height = 100, step = width / (MAX_POINTS - 1), range = FIXED_MAX - FIXED_MIN;
+                let path = '';
+                for (let i = 0; i < dataToDraw.length; i++) {
+                    const command = i === 0 ? 'M' : 'L';
+                    const x = i * step;
+                    const clampedValue = Math.max(FIXED_MIN, Math.min(FIXED_MAX, dataToDraw[i]));
+                    const normalizedValue = (clampedValue - FIXED_MIN) / range * 2 - 1;
+                    const y = height / 2 - (height / 2 - 10) * normalizedValue;
+                    path += ` ${command} ${x.toFixed(2)},${y.toFixed(2)}`;
+                }
+                return path.trim();
+            }, [animatedData]);
+            
+            return (
+                <div className="w-full h-full">
+                    <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <path d={pathData} fill="none" stroke="#67e8f9" strokeWidth="0.5" strokeLinejoin="round" strokeLinecap="round" />
+                    </svg>
+                </div>
+            );
+        };
+
+        // --- StartScreen Component ---
+        const HumanSilhouette = () => (
+            <svg viewBox="0 0 200 100" className="w-64 h-32 mx-auto my-2 text-indigo-400">
+                <circle cx="100" cy="15" r="10" fill="currentColor" />
+                <path d="M100,25 Q90,50 90,70 L85,95 H115 L110,70 Q110,50 100,25 Z" fill="currentColor" />
+                <path d="M90,50 C70,45 60,60 50,65" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round" />
+                <path d="M110,50 C130,45 140,60 150,65" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round" />
+                <rect x="92" y="65" width="16" height="10" rx="2" fill="rgba(103, 232, 249, 0.2)" stroke="#67e8f9" strokeWidth="0.5" />
+            </svg>
+        );
+        const SpiritLevel = ({ beta, gamma }) => {
+            const isFlat = beta !== null && gamma !== null && Math.abs(beta) < 5 && Math.abs(gamma) < 5;
+            const clampedGamma = Math.max(-15, Math.min(15, gamma || 0));
+            const clampedBeta = Math.max(-15, Math.min(15, beta || 0));
+            const dotX = 50 + clampedGamma * 1.5;
+            const dotY = 50 + clampedBeta * 1.5;
+
+            return (
+                <div className="my-4 flex flex-col items-center">
+                    <svg viewBox="0 0 100 100" className="w-24 h-24">
+                        <circle cx="50" cy="50" r="45" fill="rgba(0,0,0,0.2)" />
+                        <circle cx="50" cy="50" r="40" stroke={isFlat ? '#67e8f9' : '#4f46e5'} strokeWidth="2" fill="transparent" style={{ transition: 'stroke 0.3s ease-in-out' }} />
+                        <circle cx="50" cy="50" r="5" stroke="#a5b4fc" strokeWidth="1" fill="transparent" />
+                        <circle cx={dotX} cy={dotY} r="8" fill={isFlat ? '#67e8f9' : '#a5b4fc'} style={{ transition: 'cx 0.1s ease-out, cy 0.1s ease-out, fill 0.3s ease-in-out' }} />
+                    </svg>
+                </div>
+            );
+        };
+        const StartScreen = ({ onStart }) => {
+            const [permissionState, setPermissionState] = useState('idle');
+            const [orientation, setOrientation] = useState({ beta: null, gamma: null });
+            const [error, setError] = useState(null);
+            const [countdown, setCountdown] = useState(null);
+            const [isStabilizing, setIsStabilizing] = useState(false);
+            
+            const isFlat = orientation.beta !== null && orientation.gamma !== null && Math.abs(orientation.beta) < 5 && Math.abs(orientation.gamma) < 5;
+            const stabilityTimerRef = useRef(null);
+
+            const handleDeviceOrientation = useCallback((event) => {
+                setOrientation({ beta: event.beta, gamma: event.gamma });
+            }, []);
+
+            const requestPermission = useCallback(async () => {
+                setError(null);
+                setPermissionState('requesting');
+                if (typeof (DeviceOrientationEvent).requestPermission === 'function') {
+                    try {
+                        const permission = await DeviceOrientationEvent.requestPermission();
+                        if (permission === 'granted') {
+                            setPermissionState('granted');
+                            window.addEventListener('deviceorientation', handleDeviceOrientation);
+                        } else {
+                            setPermissionState('denied');
+                            setError('Sensor access denied. Please enable it in your browser settings.');
+                        }
+                    } catch (err) {
+                        setPermissionState('denied');
+                        setError('An error occurred while requesting sensor access.');
+                    }
+                } else {
+                    setPermissionState('granted');
+                    window.addEventListener('deviceorientation', handleDeviceOrientation);
+                }
+            }, [handleDeviceOrientation]);
+
+            useEffect(() => {
+                if (stabilityTimerRef.current) clearTimeout(stabilityTimerRef.current);
+                if (permissionState !== 'granted' || !isFlat) {
+                    setIsStabilizing(false);
+                    if (countdown !== null) setCountdown(null);
+                    return;
+                }
+                if (countdown === null && !isStabilizing) {
+                    setIsStabilizing(true);
+                    stabilityTimerRef.current = window.setTimeout(() => {
+                        setIsStabilizing(false);
+                        setCountdown(3);
+                        speak("3");
+                    }, 2000);
+                }
+            }, [isFlat, permissionState, countdown, isStabilizing]);
+
+            useEffect(() => {
+                if (countdown === null) return;
+                if (countdown === 0) {
+                    onStart();
+                    return;
+                }
+                const timerId = setTimeout(() => {
+                    const nextCount = countdown - 1;
+                    if (nextCount > 0) speak(String(nextCount));
+                    setCountdown(nextCount);
+                }, 1000);
+                return () => clearTimeout(timerId);
+            }, [countdown, onStart]);
+            
+            useEffect(() => {
+                return () => window.removeEventListener('deviceorientation', handleDeviceOrientation);
+            }, [handleDeviceOrientation]);
+            
+            const renderStatus = () => {
+                if (countdown !== null) return <p className="text-8xl font-bold text-cyan-400">{countdown}</p>;
+                if (isStabilizing) return <p className="font-semibold text-blue-300">Hold steady...</p>;
+                if (orientation.beta === null) return <p className="font-semibold text-yellow-300">Place phone on your belly...</p>;
+                return <p className="font-semibold text-yellow-300">Level the phone until the ring is green.</p>;
+            };
+
+            return (
+                <div className="w-full max-w-md mx-auto text-center p-8 bg-indigo-800/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-indigo-700/50">
+                    <h1 className="text-4xl font-bold text-cyan-400 mb-2 tracking-wide">BreathCoach</h1>
+                    <p className="text-indigo-200 mb-4">Lie down and place your phone on the highlighted area.</p>
+                    <HumanSilhouette />
+                    <SpiritLevel beta={orientation.beta} gamma={orientation.gamma} />
+                    {error && <p className="text-red-400 mt-4">{error}</p>}
+                    {permissionState !== 'granted' ? (
+                        <button onClick={requestPermission} disabled={permissionState === 'requesting'} className="mt-4 w-full bg-cyan-500 text-indigo-900 font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/50 transition-all duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50">
+                            {permissionState === 'requesting' ? 'Requesting...' : 'Allow Sensor Access'}
+                        </button>
+                    ) : (
+                        <div className="mt-4 h-20 flex items-center justify-center text-lg">{renderStatus()}</div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- SessionScreen Component ---
+        const SessionScreen = ({ onSessionComplete }) => {
+            const SESSION_DURATION = 60;
+            const [timeLeft, setTimeLeft] = useState(SESSION_DURATION);
+            const { filteredData, breathsPerMinute, recordedBreaths, startListening, stopListening } = useMotionSensors();
+
+            const breathsRef = useRef(recordedBreaths);
+            useEffect(() => { breathsRef.current = recordedBreaths; }, [recordedBreaths]);
+            
+            useEffect(() => {
+                let audioContext, inhaleOsc, exhaleOsc, inhaleGain, exhaleGain;
+                let isPlaying = true;
+                
+                function setupAudio() {
+                    try {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        inhaleGain = audioContext.createGain();
+                        inhaleGain.gain.setValueAtTime(0, audioContext.currentTime);
+                        inhaleGain.connect(audioContext.destination);
+                        exhaleGain = audioContext.createGain();
+                        exhaleGain.gain.setValueAtTime(0, audioContext.currentTime);
+                        exhaleGain.connect(audioContext.destination);
+                        inhaleOsc = audioContext.createOscillator();
+                        inhaleOsc.type = 'sine';
+                        inhaleOsc.frequency.setValueAtTime(392.00, audioContext.currentTime);
+                        inhaleOsc.connect(inhaleGain);
+                        inhaleOsc.start();
+                        exhaleOsc = audioContext.createOscillator();
+                        exhaleOsc.type = 'sine';
+                        exhaleOsc.frequency.setValueAtTime(261.63, audioContext.currentTime);
+                        exhaleOsc.connect(exhaleGain);
+                        exhaleOsc.start();
+                    } catch (e) { console.error("Failed to initialize Web Audio API", e); }
+                }
+
+                function playBreathingCycle() {
+                    if (!isPlaying || !audioContext) return;
+                    const now = audioContext.currentTime;
+                    inhaleGain.gain.linearRampToValueAtTime(0.3, now + 0.5);
+                    inhaleGain.gain.linearRampToValueAtTime(0, now + 4);
+                    exhaleGain.gain.linearRampToValueAtTime(0.3, now + 4.5);
+                    exhaleGain.gain.linearRampToValueAtTime(0, now + 10);
+                    setTimeout(playBreathingCycle, 10000);
+                }
+                
+                setupAudio();
+                playBreathingCycle();
+                speak("Begin breathing. Follow the tones.");
+                startListening();
+
+                const timer = setInterval(() => {
+                    setTimeLeft(prevTime => {
+                        if (prevTime <= 1) {
+                            clearInterval(timer);
+                            stopListening();
+                            onSessionComplete({ breaths: breathsRef.current, duration: SESSION_DURATION });
+                            return 0;
+                        }
+                        return prevTime - 1;
+                    });
+                }, 1000);
+
+                return () => {
+                    clearInterval(timer);
+                    stopListening();
+                    isPlaying = false;
+                    if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(console.error);
+                };
+            }, [onSessionComplete, startListening, stopListening]);
+
+            const formattedTime = useMemo(() => `${Math.floor(timeLeft / 60).toString().padStart(2, '0')}:${(timeLeft % 60).toString().padStart(2, '0')}`, [timeLeft]);
+
+            return (
+                <div className="w-full h-full flex flex-col items-center justify-center p-4">
+                    <div className="w-full max-w-4xl mx-auto flex flex-col items-center justify-center flex-grow relative">
+                        <div className="absolute top-4 right-4 text-center"><div className="text-indigo-300 text-sm">TIME LEFT</div><div className="text-4xl font-mono font-bold text-cyan-400">{formattedTime}</div></div>
+                        <div className="absolute top-4 left-4 text-center"><div className="text-indigo-300 text-sm">LIVE RATE</div><div className="text-4xl font-mono font-bold text-cyan-400">{breathsPerMinute.toFixed(1)}</div><div className="text-indigo-300 text-xs">BPM</div></div>
+                        <div className="w-full h-64 md:h-96"><BreathingVisualizer data={filteredData} /></div>
+                        <div className="mt-8 text-center"><p className="text-xl text-indigo-200">Breathe slowly and deeply with your belly.</p><p className="text-md text-indigo-400">Follow the audio guide.</p></div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- ScoreScreen Component ---
+        const ScoreCircle = ({ score }) => {
+            const circumference = 2 * Math.PI * 56;
+            const offset = circumference - (score / 100) * circumference;
+            return (
+                <div className="relative w-40 h-40">
+                    <svg className="w-full h-full" viewBox="0 0 120 120">
+                        <circle className="text-indigo-700" strokeWidth="8" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" />
+                        <circle className="text-cyan-400" strokeWidth="8" strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" style={{ transition: 'stroke-dashoffset 1.5s ease-in-out' }} transform="rotate(-90 60 60)" />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-5xl font-bold text-white">{Math.round(score)}</span>
+                        <span className="text-sm text-indigo-300">Score</span>
+                    </div>
+                </div>
+            );
+        };
+        const ScoreScreen = ({ sessionData, onRestart }) => {
+            const score = useMemo(() => calculateResonanceScore(sessionData), [sessionData]);
+            
+            useEffect(() => { speak("Session complete. Here is your resonance score."); }, []);
+            
+            const feedback = useMemo(() => {
+                if (score.resonance >= 85) return "Excellent! You've achieved a state of high resonance.";
+                if (score.resonance >= 70) return "Great job! Your breathing is calm and consistent.";
+                if (score.resonance >= 50) return "Good effort. Try to maintain a more steady rhythm.";
+                return "Keep practicing. Focus on slow, regular belly breaths.";
+            }, [score.resonance]);
+
+            return (
+                <div className="w-full max-w-md mx-auto text-center p-8 bg-indigo-800/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-indigo-700/50">
+                    <h2 className="text-3xl font-bold text-cyan-400 mb-2">Session Complete</h2>
+                    <p className="text-indigo-200 mb-8">{feedback}</p>
+                    <div className="flex justify-center mb-8"><ScoreCircle score={score.resonance} /></div>
+                    <div className="grid grid-cols-2 gap-4 text-left p-6 bg-indigo-900/60 rounded-lg border border-indigo-700/60">
+                        <div><p className="text-sm text-indigo-300">Avg. Breath Rate</p><p className="text-2xl font-bold text-white">{score.avgBPM.toFixed(1)} <span className="text-lg font-normal">BPM</span></p></div>
+                        <div><p className="text-sm text-indigo-300">Rhythm Score</p><p className="text-2xl font-bold text-white">{Math.round(score.rhythm)}<span className="text-lg font-normal">/100</span></p></div>
+                    </div>
+                    <button onClick={onRestart} className="mt-8 w-full bg-cyan-500 text-indigo-900 font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/50 transition-all duration-300 ease-in-out transform hover:scale-105">Try Another Session</button>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [appState, setAppState] = useState(AppState.START);
+            const [sessionData, setSessionData] = useState(null);
+            
+            const handleSessionStart = useCallback(() => setAppState(AppState.SESSION), []);
+            
+            const handleSessionComplete = useCallback((data) => {
+                setSessionData(data);
+                setAppState(AppState.SCORE);
+            }, []);
+            
+            const handleRestart = useCallback(() => {
+                setSessionData(null);
+                setAppState(AppState.START);
+            }, []);
+            
+            const renderContent = () => {
+                switch (appState) {
+                    case AppState.SESSION: 
+                        return <SessionScreen onSessionComplete={handleSessionComplete} />;
+                    case AppState.SCORE: 
+                        return sessionData ? <ScoreScreen sessionData={sessionData} onRestart={handleRestart} /> : <StartScreen onStart={handleSessionStart} />;
+                    case AppState.START:
+                    default: 
+                        return <StartScreen onStart={handleSessionStart} />;
+                }
+            };
+            
+            return (
+                <main className="bg-gradient-to-br from-indigo-900 to-slate-900 min-h-screen w-full flex flex-col items-center justify-center text-white p-4 font-sans antialiased">
+                    {renderContent()}
+                </main>
+            );
+        };
+
+        // --- Mount the App ---
+        const rootElement = document.getElementById('root');
+        if (rootElement) {
+            const root = ReactDOM.createRoot(rootElement);
+            root.render(<React.StrictMode><App /></React.StrictMode>);
+        }
+    </script>
 </body>
 </html>
