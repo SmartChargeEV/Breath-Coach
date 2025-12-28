@@ -126,6 +126,7 @@
             const lastPeakTimeRef = useRef(null);
             const lastDirectionRef = useRef(0);
             const breathTimestampsRef = useRef([]);
+            const lastFilteredValueRef = useRef(0);
 
             const processData = useCallback(() => {
                 if (!isListeningRef.current) return;
@@ -153,7 +154,7 @@
                     return newData.length > 200 ? newData.slice(1) : newData;
                 });
 
-                const prevFilteredValue = filteredData.length > 1 ? filteredData[filteredData.length - 2] : 0;
+                const prevFilteredValue = lastFilteredValueRef.current;
                 const currentDirection = Math.sign(newFilteredValue - prevFilteredValue);
 
                 if (currentDirection === -1 && lastDirectionRef.current === 1 && Math.abs(newFilteredValue - prevFilteredValue) > 0.03) {
@@ -166,6 +167,7 @@
                     }
                 }
                 lastDirectionRef.current = currentDirection;
+                lastFilteredValueRef.current = newFilteredValue;
 
                 const now = Date.now();
                 const recentBreaths = breathTimestampsRef.current.filter(t => now - t < 15000);
@@ -176,7 +178,7 @@
                 }
                 
                 animationFrameId.current = requestAnimationFrame(processData);
-            }, [filteredData]);
+            }, []);
             
             const handleMotionEvent = useCallback((event) => {
                 rawBetaRef.current = event.beta;
@@ -189,6 +191,7 @@
                 filteredValueRef.current = null;
                 lastPeakTimeRef.current = null;
                 lastDirectionRef.current = 0;
+                lastFilteredValueRef.current = 0;
                 breathTimestampsRef.current = [];
                 setFilteredData([]);
                 setRecordedBreaths([]);
