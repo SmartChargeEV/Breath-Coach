@@ -10,9 +10,16 @@
         body {
             overscroll-behavior-y: contain;
         }
+        @keyframes subtle-pulse {
+            0%, 100% { stroke-opacity: 0.5; }
+            50% { stroke-opacity: 1; }
+        }
+        .animate-subtle-pulse {
+            animation: subtle-pulse 3s ease-in-out infinite;
+        }
     </style>
 </head>
-<body class="bg-indigo-900">
+<body class="bg-black">
     <div id="root"></div>
     <script type="text/babel" data-type="module">
         import React, { useState, useCallback, useEffect, useRef, useMemo } from 'https://esm.sh/react@^19.2.3';
@@ -37,12 +44,12 @@
             render() {
                 if (this.state.hasError) {
                     return (
-                        <div className="w-full max-w-lg mx-auto text-left p-4 bg-red-900/50 rounded-lg border border-red-700/50 text-white">
-                            <h1 className="text-2xl font-bold text-red-300 mb-2">Something went wrong.</h1>
-                            <p className="text-red-200 mb-4">The application has encountered an error. Please copy the details below and report the issue.</p>
-                            <details className="p-2 bg-slate-800/50 rounded">
-                                <summary className="cursor-pointer font-semibold text-red-300">Error Details</summary>
-                                <pre className="mt-2 text-sm text-red-200" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        <div className="w-full max-w-lg mx-auto text-left p-4 bg-gray-900 rounded-lg border border-red-700/50 text-white">
+                            <h1 className="text-2xl font-bold text-red-400 mb-2">Something went wrong.</h1>
+                            <p className="text-gray-300 mb-4">The application has encountered an error. Please copy the details below and report the issue.</p>
+                            <details className="p-2 bg-gray-800 rounded">
+                                <summary className="cursor-pointer font-semibold text-red-400">Error Details</summary>
+                                <pre className="mt-2 text-sm text-gray-300" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                     {this.state.error && this.state.error.toString()}
                                     <br />
                                     {this.state.errorInfo && this.state.errorInfo.componentStack}
@@ -116,7 +123,8 @@
             const [filteredData, setFilteredData] = useState([]);
             const [breathsPerMinute, setBreathsPerMinute] = useState(0);
             const [recordedBreaths, setRecordedBreaths] = useState([]);
-            
+            const [hasReceivedData, setHasReceivedData] = useState(false);
+
             const isListeningRef = useRef(false);
             const animationFrameId = useRef(null);
             
@@ -130,13 +138,13 @@
 
             const processData = useCallback(() => {
                 if (!isListeningRef.current) return;
+                animationFrameId.current = requestAnimationFrame(processData);
 
                 const beta = rawBetaRef.current;
-                if (beta === null) {
-                    animationFrameId.current = requestAnimationFrame(processData);
-                    return;
-                }
+                if (beta === null) return;
                 
+                if (!hasReceivedData) setHasReceivedData(true);
+
                 if (baselineRef.current === null) {
                     baselineRef.current = beta;
                 }
@@ -176,16 +184,16 @@
                     const bpm = (recentBreaths.length - 1) / secondsElapsed * 60;
                     setBreathsPerMinute(bpm);
                 }
-                
-                animationFrameId.current = requestAnimationFrame(processData);
-            }, []);
+            }, [hasReceivedData]);
             
             const handleMotionEvent = useCallback((event) => {
                 rawBetaRef.current = event.beta;
             }, []);
 
             const startListening = useCallback(() => {
+                if (isListeningRef.current) return;
                 isListeningRef.current = true;
+                setHasReceivedData(false);
                 rawBetaRef.current = null;
                 baselineRef.current = null;
                 filteredValueRef.current = null;
@@ -206,85 +214,61 @@
                 window.removeEventListener('deviceorientation', handleMotionEvent);
                 if (animationFrameId.current) {
                     cancelAnimationFrame(animationFrameId.current);
+                    animationFrameId.current = null;
                 }
             }, [handleMotionEvent]);
 
-            return { filteredData, breathsPerMinute, recordedBreaths, startListening, stopListening };
+            return { filteredData, breathsPerMinute, recordedBreaths, hasReceivedData, startListening, stopListening };
         };
 
         // --- BreathingVisualizer Component ---
         const BreathingVisualizer = ({ data }) => {
-            const [animatedData, setAnimatedData] = useState([]);
-            const targetDataRef = useRef(data);
-            const animationFrameId = useRef(null);
-            const MAX_POINTS = 200, FIXED_MIN = -5, FIXED_MAX = 5;
-
-            useEffect(() => { targetDataRef.current = data; }, [data]);
-
-            useEffect(() => {
-                const animate = () => {
-                    setAnimatedData(currentAnimatedData => {
-                        const targetData = targetDataRef.current;
-                        const LERP_FACTOR = 0.2;
-                        if (targetData.length === 0) return [];
-                        
-                        let nextAnimatedData = [...currentAnimatedData];
-                        if (nextAnimatedData.length !== targetData.length) {
-                             if (targetData.length > nextAnimatedData.length) {
-                                 const lastValue = nextAnimatedData[nextAnimatedData.length - 1] || targetData[nextAnimatedData.length] || 0;
-                                 const newPoints = Array(targetData.length - nextAnimatedData.length).fill(lastValue);
-                                 nextAnimatedData.push(...newPoints);
-                            } else {
-                                nextAnimatedData = nextAnimatedData.slice(0, targetData.length);
-                            }
-                        }
-                        for (let i = 0; i < targetData.length; i++) {
-                            nextAnimatedData[i] = (nextAnimatedData[i] || 0) + ((targetData[i] || 0) - (nextAnimatedData[i] || 0)) * LERP_FACTOR;
-                        }
-                        return nextAnimatedData;
-                    });
-                    animationFrameId.current = requestAnimationFrame(animate);
-                };
-                animationFrameId.current = requestAnimationFrame(animate);
-                return () => { if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current); };
-            }, []);
-
             const pathData = useMemo(() => {
-                const dataToDraw = animatedData;
-                if (dataToDraw.length < 2) return 'M 0 50';
+                if (data.length < 2) return 'M 0 50';
                 
+                const MAX_POINTS = 200, FIXED_MIN = -5, FIXED_MAX = 5;
                 const width = 100, height = 100, step = width / (MAX_POINTS - 1), range = FIXED_MAX - FIXED_MIN;
                 let path = '';
-                for (let i = 0; i < dataToDraw.length; i++) {
+                for (let i = 0; i < data.length; i++) {
                     const command = i === 0 ? 'M' : 'L';
                     const x = i * step;
-                    const clampedValue = Math.max(FIXED_MIN, Math.min(FIXED_MAX, dataToDraw[i]));
+                    const clampedValue = Math.max(FIXED_MIN, Math.min(FIXED_MAX, data[i]));
                     const normalizedValue = (clampedValue - FIXED_MIN) / range * 2 - 1;
                     const y = height / 2 - (height / 2 - 10) * normalizedValue;
                     path += ` ${command} ${x.toFixed(2)},${y.toFixed(2)}`;
                 }
                 return path.trim();
-            }, [animatedData]);
+            }, [data]);
             
             return (
                 <div className="w-full h-full">
                     <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                        <path d={pathData} fill="none" stroke="#67e8f9" strokeWidth="0.5" strokeLinejoin="round" strokeLinecap="round" />
+                        <path d={pathData} fill="none" stroke="#FFFFFF" strokeWidth="0.5" strokeLinejoin="round" strokeLinecap="round" />
                     </svg>
                 </div>
             );
         };
 
         // --- StartScreen Component ---
-        const HumanSilhouette = () => (
-            <svg viewBox="0 0 200 100" className="w-64 h-32 mx-auto my-2 text-indigo-400">
-                <circle cx="100" cy="15" r="10" fill="currentColor" />
-                <path d="M100,25 Q90,50 90,70 L85,95 H115 L110,70 Q110,50 100,25 Z" fill="currentColor" />
-                <path d="M90,50 C70,45 60,60 50,65" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round" />
-                <path d="M110,50 C130,45 140,60 150,65" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round" />
-                <rect x="92" y="65" width="16" height="10" rx="2" fill="rgba(103, 232, 249, 0.2)" stroke="#67e8f9" strokeWidth="0.5" />
-            </svg>
+        const PlacementGraphic = () => (
+            <div className="w-64 h-48 mx-auto my-4 relative">
+                <svg viewBox="0 0 200 120" className="w-full h-full">
+                    <g stroke="#4a4a4a" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                        {/* Far Leg */}
+                        <path d="M78 88 Q 88 70, 108 62 L 138 78 L 130 92" />
+                        {/* Main Body and Head */}
+                        <path d="M190 60 C 180 50, 165 50, 155 58 L 110 74 C 90 80, 70 80, 50 90" />
+                        {/* Near Leg */}
+                        <path d="M50 90 Q 60 72, 80 64 L 110 80 L 102 94 Z" />
+                         {/* Arm */}
+                        <path d="M115 72 L 95 82" />
+                    </g>
+                     {/* Phone Outline */}
+                    <rect x="85" y="65" width="28" height="48" rx="4" fill="none" stroke="#FFFFFF" strokeWidth="1" className="animate-subtle-pulse" transform="rotate(-15 100 89)" />
+                </svg>
+            </div>
         );
+
         const SpiritLevel = ({ beta, gamma }) => {
             const isFlat = beta !== null && gamma !== null && Math.abs(beta) < 10 && Math.abs(gamma) < 10;
             const clampedGamma = Math.max(-15, Math.min(15, gamma || 0));
@@ -295,15 +279,15 @@
             return (
                 <div className="my-4 flex flex-col items-center">
                     <svg viewBox="0 0 100 100" className="w-24 h-24">
-                        <circle cx="50" cy="50" r="45" fill="rgba(0,0,0,0.2)" />
-                        <circle cx="50" cy="50" r="40" stroke={isFlat ? '#67e8f9' : '#4f46e5'} strokeWidth="2" fill="transparent" style={{ transition: 'stroke 0.3s ease-in-out' }} />
-                        <circle cx="50" cy="50" r="15" fill={isFlat ? 'rgba(103, 232, 249, 0.2)' : 'rgba(103, 232, 249, 0.05)'} style={{ transition: 'fill 0.3s ease-in-out' }} />
-                        <circle cx={dotX} cy={dotY} r="8" fill={isFlat ? '#67e8f9' : '#a5b4fc'} style={{ transition: 'cx 0.1s ease-out, cy 0.1s ease-out, fill 0.3s ease-in-out' }} />
+                        <circle cx="50" cy="50" r="45" fill="#1a1a1a" />
+                        <circle cx="50" cy="50" r="40" stroke={isFlat ? '#ffffff' : '#4a4a4a'} strokeWidth="2" fill="transparent" style={{ transition: 'stroke 0.3s ease-in-out' }} />
+                        <circle cx="50" cy="50" r="15" fill={isFlat ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.05)'} style={{ transition: 'fill 0.3s ease-in-out' }} />
+                        <circle cx={dotX} cy={dotY} r="8" fill={'#ffffff'} style={{ transition: 'cx 0.1s ease-out, cy 0.1s ease-out, fill 0.3s ease-in-out' }} />
                     </svg>
                 </div>
             );
         };
-        const StartScreen = ({ onStart }) => {
+        const StartScreen = ({ onStart, onActivateAudio }) => {
             const [permissionState, setPermissionState] = useState('idle');
             const [orientation, setOrientation] = useState({ beta: null, gamma: null });
             const [error, setError] = useState(null);
@@ -320,6 +304,9 @@
             const requestPermission = useCallback(async () => {
                 setError(null);
                 setPermissionState('requesting');
+
+                onActivateAudio();
+
                 if (typeof (DeviceOrientationEvent).requestPermission === 'function') {
                     try {
                         const permission = await DeviceOrientationEvent.requestPermission();
@@ -338,30 +325,30 @@
                     setPermissionState('granted');
                     window.addEventListener('deviceorientation', handleDeviceOrientation);
                 }
-            }, [handleDeviceOrientation]);
+            }, [handleDeviceOrientation, onActivateAudio]);
 
             useEffect(() => {
-                if (isStabilizing) {
-                    return;
-                }
+                if (isStabilizing) return;
+                
                 if (stabilityTimerRef.current) {
                     clearTimeout(stabilityTimerRef.current);
                     stabilityTimerRef.current = null;
                 }
+
                 if (permissionState !== 'granted' || !isFlat) {
                     if (countdown !== null) setCountdown(null);
                     return;
                 }
+
                 if (countdown === null) {
                     setIsStabilizing(true);
-                    stabilityTimerRef.current = window.setTimeout(() => {
+                    stabilityTimerRef.current = setTimeout(() => {
                         setIsStabilizing(false);
                         setCountdown(3);
                         speak("3");
-                        stabilityTimerRef.current = null;
                     }, 2000);
                 }
-            }, [isFlat, permissionState, countdown, isStabilizing, onStart]);
+            }, [isFlat, permissionState, countdown, isStabilizing]);
 
             useEffect(() => {
                 if (countdown === null) return;
@@ -382,21 +369,21 @@
             }, [handleDeviceOrientation]);
             
             const renderStatus = () => {
-                if (countdown !== null) return <p className="text-8xl font-bold text-cyan-400">{countdown}</p>;
-                if (isStabilizing) return <p className="font-semibold text-blue-300 animate-pulse">Hold steady...</p>;
-                if (orientation.beta === null) return <p className="font-semibold text-yellow-300">Place phone on your belly...</p>;
-                return <p className="font-semibold text-yellow-300">Adjust phone until the dot is in the center.</p>;
+                if (countdown !== null) return <p className="text-8xl font-bold text-white">{countdown}</p>;
+                if (isStabilizing) return <p className="font-semibold text-gray-300 animate-pulse">Hold steady...</p>;
+                if (orientation.beta === null) return <p className="font-semibold text-gray-300">Place phone on your belly...</p>;
+                return <p className="font-semibold text-gray-300">Adjust phone until the dot is in the center.</p>;
             };
 
             return (
-                <div className="w-full max-w-md mx-auto text-center p-8 bg-indigo-800/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-indigo-700/50">
-                    <h1 className="text-4xl font-bold text-cyan-400 mb-2 tracking-wide">BreathCoach</h1>
-                    <p className="text-indigo-200 mb-4">Lie down and place your phone on the highlighted area.</p>
-                    <HumanSilhouette />
+                <div className="w-full max-w-md mx-auto text-center p-8 bg-gray-900/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-gray-700/50">
+                    <h1 className="text-4xl font-bold text-white mb-2 tracking-wide">BreathCoach</h1>
+                    <p className="text-gray-400 mb-2">Lie down and place your phone on the highlighted area.</p>
+                    <PlacementGraphic />
                     <SpiritLevel beta={orientation.beta} gamma={orientation.gamma} />
                     {error && <p className="text-red-400 mt-4">{error}</p>}
                     {permissionState !== 'granted' ? (
-                        <button onClick={requestPermission} disabled={permissionState === 'requesting'} className="mt-4 w-full bg-cyan-500 text-indigo-900 font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/50 transition-all duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50">
+                        <button onClick={requestPermission} disabled={permissionState === 'requesting'} className="mt-4 w-full bg-white text-black font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-gray-200 focus:outline-none focus:ring-4 focus:ring-gray-500/50 transition-all duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50">
                             {permissionState === 'requesting' ? 'Requesting...' : 'Allow Sensor Access'}
                         </button>
                     ) : (
@@ -407,84 +394,123 @@
         };
 
         // --- SessionScreen Component ---
-        const SessionScreen = ({ onSessionComplete }) => {
+        const SessionScreen = ({ onSessionComplete, audioContext }) => {
             const SESSION_DURATION = 60;
             const [timeLeft, setTimeLeft] = useState(SESSION_DURATION);
-            const { filteredData, breathsPerMinute, recordedBreaths, startListening, stopListening } = useMotionSensors();
+            const { filteredData, breathsPerMinute, recordedBreaths, hasReceivedData, startListening, stopListening } = useMotionSensors();
+            const [sensorError, setSensorError] = useState(false);
 
             const breathsRef = useRef(recordedBreaths);
             useEffect(() => { breathsRef.current = recordedBreaths; }, [recordedBreaths]);
             
             useEffect(() => {
-                let audioContext, inhaleOsc, exhaleOsc, inhaleGain, exhaleGain;
-                let isPlaying = true;
-                
-                function setupAudio() {
-                    try {
-                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        inhaleGain = audioContext.createGain();
-                        inhaleGain.gain.setValueAtTime(0, audioContext.currentTime);
-                        inhaleGain.connect(audioContext.destination);
-                        exhaleGain = audioContext.createGain();
-                        exhaleGain.gain.setValueAtTime(0, audioContext.currentTime);
-                        exhaleGain.connect(audioContext.destination);
-                        inhaleOsc = audioContext.createOscillator();
-                        inhaleOsc.type = 'sine';
-                        inhaleOsc.frequency.setValueAtTime(392.00, audioContext.currentTime);
-                        inhaleOsc.connect(inhaleGain);
-                        inhaleOsc.start();
-                        exhaleOsc = audioContext.createOscillator();
-                        exhaleOsc.type = 'sine';
-                        exhaleOsc.frequency.setValueAtTime(261.63, audioContext.currentTime);
-                        exhaleOsc.connect(exhaleGain);
-                        exhaleOsc.start();
-                    } catch (e) { console.error("Failed to initialize Web Audio API", e); }
-                }
-
-                function playBreathingCycle() {
-                    if (!isPlaying || !audioContext) return;
-                    const now = audioContext.currentTime;
-                    inhaleGain.gain.linearRampToValueAtTime(0.3, now + 0.5);
-                    inhaleGain.gain.linearRampToValueAtTime(0, now + 4);
-                    exhaleGain.gain.linearRampToValueAtTime(0.3, now + 4.5);
-                    exhaleGain.gain.linearRampToValueAtTime(0, now + 10);
-                    setTimeout(playBreathingCycle, 10000);
-                }
-                
-                setupAudio();
-                playBreathingCycle();
-                speak("Begin breathing. Follow the tones.");
                 startListening();
+                speak("Begin breathing. Follow the tones.");
 
                 const timer = setInterval(() => {
                     setTimeLeft(prevTime => {
                         if (prevTime <= 1) {
                             clearInterval(timer);
-                            stopListening();
-                            onSessionComplete({ breaths: breathsRef.current, duration: SESSION_DURATION });
                             return 0;
                         }
                         return prevTime - 1;
                     });
                 }, 1000);
 
+                const sensorCheck = setTimeout(() => {
+                    if (!hasReceivedData) {
+                        setSensorError(true);
+                    }
+                }, 4000);
+                
+                let audioGuide = null;
+                if (audioContext && audioContext.state === 'running') {
+                    const gain = audioContext.createGain();
+                    gain.gain.setValueAtTime(0, audioContext.currentTime);
+                    gain.connect(audioContext.destination);
+
+                    const oscillators = [
+                        { freq: 392.00, gain: 0.3, type: 'sine' }, // Inhale
+                        { freq: 261.63, gain: 0.3, type: 'sine' }  // Exhale
+                    ];
+
+                    let isPlaying = true;
+                    
+                    const playCycle = () => {
+                        if (!isPlaying) return;
+                        
+                        const now = audioContext.currentTime;
+                        
+                        const inhaleOsc = audioContext.createOscillator();
+                        inhaleOsc.type = oscillators[0].type;
+                        inhaleOsc.frequency.setValueAtTime(oscillators[0].freq, now);
+                        const inhaleGain = audioContext.createGain();
+                        inhaleGain.gain.setValueAtTime(0, now);
+                        inhaleGain.gain.linearRampToValueAtTime(oscillators[0].gain, now + 0.5);
+                        inhaleGain.gain.linearRampToValueAtTime(0, now + 4);
+                        inhaleOsc.connect(inhaleGain).connect(audioContext.destination);
+                        inhaleOsc.start(now);
+                        inhaleOsc.stop(now + 4);
+
+                        const exhaleOsc = audioContext.createOscillator();
+                        exhaleOsc.type = oscillators[1].type;
+                        exhaleOsc.frequency.setValueAtTime(oscillators[1].freq, now + 4);
+                         const exhaleGain = audioContext.createGain();
+                        exhaleGain.gain.setValueAtTime(0, now + 4);
+                        exhaleGain.gain.linearRampToValueAtTime(oscillators[1].gain, now + 4.5);
+                        exhaleGain.gain.linearRampToValueAtTime(0, now + 10);
+                        exhaleOsc.connect(exhaleGain).connect(audioContext.destination);
+                        exhaleOsc.start(now + 4);
+                        exhaleOsc.stop(now + 10);
+                        
+                        audioGuide = setTimeout(playCycle, 10000);
+                    };
+                    playCycle();
+
+                    return () => {
+                        isPlaying = false;
+                        clearTimeout(audioGuide);
+                        clearInterval(timer);
+                        clearTimeout(sensorCheck);
+                        stopListening();
+                    };
+                }
+
                 return () => {
                     clearInterval(timer);
+                    clearTimeout(sensorCheck);
                     stopListening();
-                    isPlaying = false;
-                    if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(console.error);
                 };
-            }, [onSessionComplete, startListening, stopListening]);
+            }, [audioContext, startListening, stopListening, hasReceivedData]);
+
+            useEffect(() => {
+                if (timeLeft === 0) {
+                    stopListening();
+                    onSessionComplete({ breaths: breathsRef.current, duration: SESSION_DURATION });
+                }
+            }, [timeLeft, onSessionComplete, stopListening]);
 
             const formattedTime = useMemo(() => `${Math.floor(timeLeft / 60).toString().padStart(2, '0')}:${(timeLeft % 60).toString().padStart(2, '0')}`, [timeLeft]);
+
+            if (sensorError) {
+                return (
+                    <div className="w-full max-w-md mx-auto text-center p-8 bg-gray-900/50 rounded-lg">
+                        <h2 className="text-2xl font-bold text-red-400 mb-4">Sensor Error</h2>
+                        <p className="text-gray-300">Could not read motion sensor data. Please ensure your browser has permission and your device supports it.</p>
+                        <button onClick={() => window.location.reload()} className="mt-6 bg-white text-black font-bold py-2 px-4 rounded-lg">
+                            Reload
+                        </button>
+                    </div>
+                );
+            }
 
             return (
                 <div className="w-full h-full flex flex-col items-center justify-center p-4">
                     <div className="w-full max-w-4xl mx-auto flex flex-col items-center justify-center flex-grow relative">
-                        <div className="absolute top-4 right-4 text-center"><div className="text-indigo-300 text-sm">TIME LEFT</div><div className="text-4xl font-mono font-bold text-cyan-400">{formattedTime}</div></div>
-                        <div className="absolute top-4 left-4 text-center"><div className="text-indigo-300 text-sm">LIVE RATE</div><div className="text-4xl font-mono font-bold text-cyan-400">{breathsPerMinute.toFixed(1)}</div><div className="text-indigo-300 text-xs">BPM</div></div>
+                        <div className="absolute top-4 right-4 text-center"><div className="text-gray-400 text-sm">TIME LEFT</div><div className="text-4xl font-mono font-bold text-white">{formattedTime}</div></div>
+                        <div className="absolute top-4 left-4 text-center"><div className="text-gray-400 text-sm">LIVE RATE</div><div className="text-4xl font-mono font-bold text-white">{breathsPerMinute.toFixed(1)}</div><div className="text-gray-400 text-xs">BPM</div></div>
                         <div className="w-full h-64 md:h-96"><BreathingVisualizer data={filteredData} /></div>
-                        <div className="mt-8 text-center"><p className="text-xl text-indigo-200">Breathe slowly and deeply with your belly.</p><p className="text-md text-indigo-400">Follow the audio guide.</p></div>
+                        <div className="mt-8 text-center"><p className="text-xl text-gray-200">Breathe slowly and deeply with your belly.</p><p className="text-md text-gray-400">Follow the audio guide.</p></div>
                     </div>
                 </div>
             );
@@ -497,12 +523,12 @@
             return (
                 <div className="relative w-40 h-40">
                     <svg className="w-full h-full" viewBox="0 0 120 120">
-                        <circle className="text-indigo-700" strokeWidth="8" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" />
-                        <circle className="text-cyan-400" strokeWidth="8" strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" style={{ transition: 'stroke-dashoffset 1.5s ease-in-out' }} transform="rotate(-90 60 60)" />
+                        <circle className="text-gray-700" strokeWidth="8" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" />
+                        <circle className="text-white" strokeWidth="8" strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" stroke="currentColor" fill="transparent" r="56" cx="60" cy="60" style={{ transition: 'stroke-dashoffset 1.5s ease-in-out' }} transform="rotate(-90 60 60)" />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
                         <span className="text-5xl font-bold text-white">{Math.round(score)}</span>
-                        <span className="text-sm text-indigo-300">Score</span>
+                        <span className="text-sm text-gray-400">Score</span>
                     </div>
                 </div>
             );
@@ -520,15 +546,15 @@
             }, [score.resonance]);
 
             return (
-                <div className="w-full max-w-md mx-auto text-center p-8 bg-indigo-800/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-indigo-700/50">
-                    <h2 className="text-3xl font-bold text-cyan-400 mb-2">Session Complete</h2>
-                    <p className="text-indigo-200 mb-8">{feedback}</p>
+                <div className="w-full max-w-md mx-auto text-center p-8 bg-gray-900/50 rounded-2xl shadow-2xl backdrop-blur-lg border border-gray-700/50">
+                    <h2 className="text-3xl font-bold text-white mb-2">Session Complete</h2>
+                    <p className="text-gray-300 mb-8">{feedback}</p>
                     <div className="flex justify-center mb-8"><ScoreCircle score={score.resonance} /></div>
-                    <div className="grid grid-cols-2 gap-4 text-left p-6 bg-indigo-900/60 rounded-lg border border-indigo-700/60">
-                        <div><p className="text-sm text-indigo-300">Avg. Breath Rate</p><p className="text-2xl font-bold text-white">{score.avgBPM.toFixed(1)} <span className="text-lg font-normal">BPM</span></p></div>
-                        <div><p className="text-sm text-indigo-300">Rhythm Score</p><p className="text-2xl font-bold text-white">{Math.round(score.rhythm)}<span className="text-lg font-normal">/100</span></p></div>
+                    <div className="grid grid-cols-2 gap-4 text-left p-6 bg-black/60 rounded-lg border border-gray-700/60">
+                        <div><p className="text-sm text-gray-400">Avg. Breath Rate</p><p className="text-2xl font-bold text-white">{score.avgBPM.toFixed(1)} <span className="text-lg font-normal">BPM</span></p></div>
+                        <div><p className="text-sm text-gray-400">Rhythm Score</p><p className="text-2xl font-bold text-white">{Math.round(score.rhythm)}<span className="text-lg font-normal">/100</span></p></div>
                     </div>
-                    <button onClick={onRestart} className="mt-8 w-full bg-cyan-500 text-indigo-900 font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/50 transition-all duration-300 ease-in-out transform hover:scale-105">Try Another Session</button>
+                    <button onClick={onRestart} className="mt-8 w-full bg-white text-black font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-gray-200 focus:outline-none focus:ring-4 focus:ring-gray-500/50 transition-all duration-300 ease-in-out transform hover:scale-105">Try Another Session</button>
                 </div>
             );
         };
@@ -537,6 +563,18 @@
         const App = () => {
             const [appState, setAppState] = useState(AppState.START);
             const [sessionData, setSessionData] = useState(null);
+            const audioContextRef = useRef(null);
+
+            const handleActivateAudio = useCallback(() => {
+                if (!audioContextRef.current) {
+                    try {
+                        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) { console.error("Web Audio API is not supported.", e); }
+                }
+                if (audioContextRef.current?.state === 'suspended') {
+                    audioContextRef.current.resume();
+                }
+            }, []);
             
             const handleSessionStart = useCallback(() => setAppState(AppState.SESSION), []);
             
@@ -553,18 +591,20 @@
             const renderContent = () => {
                 switch (appState) {
                     case AppState.SESSION: 
-                        return <SessionScreen onSessionComplete={handleSessionComplete} />;
+                        return <SessionScreen onSessionComplete={handleSessionComplete} audioContext={audioContextRef.current} />;
                     case AppState.SCORE: 
-                        return sessionData ? <ScoreScreen sessionData={sessionData} onRestart={handleRestart} /> : <StartScreen onStart={handleSessionStart} />;
+                        return sessionData ? <ScoreScreen sessionData={sessionData} onRestart={handleRestart} /> : <StartScreen onStart={handleSessionStart} onActivateAudio={handleActivateAudio} />;
                     case AppState.START:
                     default: 
-                        return <StartScreen onStart={handleSessionStart} />;
+                        return <StartScreen onStart={handleSessionStart} onActivateAudio={handleActivateAudio} />;
                 }
             };
             
             return (
-                <main className="bg-gradient-to-br from-indigo-900 to-slate-900 min-h-screen w-full flex flex-col items-center justify-center text-white p-4 font-sans antialiased">
-                    {renderContent()}
+                <main className="bg-black min-h-screen w-full flex flex-col items-center justify-center text-white p-4 font-sans antialiased">
+                    <ErrorBoundary>
+                        {renderContent()}
+                    </ErrorBoundary>
                 </main>
             );
         };
@@ -573,13 +613,7 @@
         const rootElement = document.getElementById('root');
         if (rootElement) {
             const root = ReactDOM.createRoot(rootElement);
-            root.render(
-                <React.StrictMode>
-                    <ErrorBoundary>
-                        <App />
-                    </ErrorBoundary>
-                </React.StrictMode>
-            );
+            root.render(<App />);
         }
     </script>
 </body>
